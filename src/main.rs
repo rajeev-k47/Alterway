@@ -1,5 +1,6 @@
 mod config;
 mod handler;
+mod parser;
 
 use anyhow::Result;
 use config::Config;
@@ -19,7 +20,7 @@ async fn main() -> Result<()> {
                 let config = config.clone();
 
                 tokio::spawn(async move {
-                    if let Err(e) = handler::handle_client(stream, config).await {
+                    if let Err(e) = handler::handle_client(stream, addr, config).await {
                         error!("E[Handling Client] {}: {}", addr, e);
                     }
                 });
