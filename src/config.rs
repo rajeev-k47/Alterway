@@ -30,9 +30,9 @@ impl Config {
         Ok(config)
     }
 
-    pub fn save(&self, path: &str) -> Result<()> {
-        let contents = toml::to_string_pretty(self)?;
-        fs::write(path, contents)?;
-        Ok(())
-    }
+    // pub fn save(&self, path: &str) -> Result<()> {
+    //     let contents = toml::to_string_pretty(self)?;
+    //     fs::write(path, contents)?;
+    //     Ok(())
+    // }
 }

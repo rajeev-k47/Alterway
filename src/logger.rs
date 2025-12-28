@@ -9,7 +9,7 @@ pub fn log_request(
     request: &HttpRequest,
     client_addr: SocketAddr,
     action: &str,
-    status: u16,
+    #[allow(unused)] status: u16,
     bytes_transferred: usize,
 ) {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");

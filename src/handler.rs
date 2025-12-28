@@ -68,6 +68,66 @@ pub async fn handle_client(
         return handle_connect(stream, request, client_addr, config).await;
     }
 
+    forward_http_request(stream, request, client_addr, config).await
+}
+
+async fn forward_http_request(
+    mut client_stream: TcpStream,
+    request: HttpRequest,
+    client_addr: SocketAddr,
+    config: Config,
+) -> Result<()> {
+    let target_addr = format!("{}:{}", request.host, request.port);
+
+    let mut server_stream = match timeout(
+        Duration::from_secs(config.request_timeout_secs),
+        TcpStream::connect(&target_addr),
+    )
+    .await
+    {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(e)) => {
+            error!("E[Failed to connect] to {}: {}", target_addr, e);
+            send_error_response(&mut client_stream, 502, "Bad Gateway").await?;
+            return Ok(());
+        }
+        Err(_) => {
+            error!("E[Connection timeout] to {}", target_addr);
+            send_error_response(&mut client_stream, 504, "Gateway Timeout").await?;
+            return Ok(());
+        }
+    };
+
+    let request_bytes = request.to_bytes();
+    server_stream.write_all(&request_bytes).await?;
+
+    let mut total_bytes = 0;
+    let mut buffer = vec![0u8; BUFFER_SIZE];
+    //back to client
+    loop {
+        let n = match server_stream.read(&mut buffer).await {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) => {
+                error!("E[Error: {}]", e);
+                break;
+            }
+        };
+
+        if let Err(e) = client_stream.write_all(&buffer[..n]).await {
+            error!("E[Error: {}]", e);
+            break;
+        }
+
+        total_bytes += n;
+    }
+
+    log_request(&request, client_addr, "ALLOWED", 200, total_bytes);
+    info!(
+        "Completed request from {} ({} bytes)",
+        client_addr, total_bytes
+    );
+
     Ok(())
 }
 
