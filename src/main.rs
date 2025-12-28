@@ -3,16 +3,30 @@ mod handler;
 
 use anyhow::Result;
 use config::Config;
-use std::net::TcpListener;
+use log::error;
+use tokio::net::TcpListener;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     env_logger::init();
 
     let config = Config::from_file("config/proxy.toml").unwrap_or_else(|_| Config::default());
-    let listener = TcpListener::bind("127.0.0.1:8080")?;
+    let listener = TcpListener::bind(&config.listen_addr).await?;
 
-    for stream in listener.incoming() {
-        handler::handle_client(stream?);
+    loop {
+        match listener.accept().await {
+            Ok((stream, addr)) => {
+                let config = config.clone();
+
+                tokio::spawn(async move {
+                    if let Err(e) = handler::handle_client(stream, config).await {
+                        error!("E[Handling Client] {}: {}", addr, e);
+                    }
+                });
+            }
+            Err(e) => {
+                error!("E[Connection] : {}", e);
+            }
+        }
     }
-    Ok(())
 }
