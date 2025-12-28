@@ -64,6 +64,86 @@ pub async fn handle_client(
         send_error_response(&mut stream, 403, "Forbidden").await?;
         return Ok(());
     }
+    if request.method.eq_ignore_ascii_case("CONNECT") {
+        return handle_connect(stream, request, client_addr, config).await;
+    }
+
+    Ok(())
+}
+
+async fn handle_connect(
+    mut client_stream: TcpStream,
+    request: HttpRequest,
+    client_addr: SocketAddr,
+    config: Config,
+) -> Result<()> {
+    let target_addr = format!("{}:{}", request.host, request.port);
+    info!("Tunnel to {} from {}", target_addr, client_addr);
+
+    let mut server_stream = match timeout(
+        Duration::from_secs(config.request_timeout_secs),
+        TcpStream::connect(&target_addr),
+    )
+    .await
+    {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(e)) => {
+            error!("E[Failed to connect] to {}: {}", target_addr, e);
+            send_error_response(&mut client_stream, 502, "Bad Gateway").await?;
+            return Ok(());
+        }
+        Err(_) => {
+            error!("E[Timeout] to {}", target_addr);
+            send_error_response(&mut client_stream, 504, "Gateway Timeout").await?;
+            return Ok(());
+        }
+    };
+
+    client_stream
+        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        .await?;
+
+    let (mut client_read, mut client_write) = client_stream.split();
+    let (mut server_read, mut server_write) = server_stream.split();
+
+    let client_to_server = async {
+        let mut buf = vec![0u8; BUFFER_SIZE];
+        loop {
+            match client_read.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if server_write.write_all(&buf[..n]).await.is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    };
+
+    let server_to_client = async {
+        let mut buf = vec![0u8; BUFFER_SIZE];
+        loop {
+            match server_read.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if client_write.write_all(&buf[..n]).await.is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    };
+
+    tokio::select! {
+        _ = client_to_server => {},
+        _ = server_to_client => {},
+    }
+
+    log_request(&request, client_addr, "CONNECT", 200, 0);
+    info!("tunnel closed for {}", client_addr);
+
     Ok(())
 }
 
