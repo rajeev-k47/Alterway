@@ -1,8 +1,11 @@
 use crate::config::Config;
+use crate::filter::Filter;
+use crate::logger::log_request;
 use crate::parser::HttpRequest;
 use anyhow::{Result, anyhow};
 use log::{error, info, warn};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
@@ -12,6 +15,7 @@ const BUFFER_SIZE: usize = 8192;
 pub async fn handle_client(
     mut stream: TcpStream,
     client_addr: SocketAddr,
+    filter: Arc<Filter>,
     config: Config,
 ) -> Result<()> {
     let mut buffer = vec![0u8; BUFFER_SIZE];
@@ -53,6 +57,13 @@ pub async fn handle_client(
         "Request {}: {} {} (Host: {}:{})",
         client_addr, request.method, request.uri, request.host, request.port
     );
+
+    if filter.is_blocked(&request.host) {
+        warn!("Blocked request to {} from {}", request.host, client_addr);
+        log_request(&request, client_addr, "BLOCKED", 403, 0);
+        send_error_response(&mut stream, 403, "Forbidden").await?;
+        return Ok(());
+    }
     Ok(())
 }
 
